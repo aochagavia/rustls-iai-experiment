@@ -15,7 +15,10 @@ use rustls::{ClientConfig, ClientConnection};
 use rustls::{ConnectionCommon, SideData};
 use rustls::{ServerConfig, ServerConnection};
 
-use iai::{black_box, main};
+use criterion::{black_box, Criterion, criterion_group, criterion_main};
+use criterion_perf_events::Perf;
+use perfcnt::linux::HardwareEventType as Hardware;
+use perfcnt::linux::PerfCounterBuilderLinux as Builder;
 
 fn transfer<L, R, LS, RS>(left: &mut L, right: &mut R, expect_data: Option<usize>)
     where
@@ -326,39 +329,20 @@ fn make_client_config(
     cfg
 }
 
-fn apply_work_multiplier(work: u64) -> u64 {
-    let mul = match env::var("BENCH_MULTIPLIER") {
-        Ok(val) => val
-            .parse::<f64>()
-            .expect("invalid BENCH_MULTIPLIER value"),
-        Err(_) => 1.,
-    };
-
-    ((work as f64) * mul).round() as u64
-}
-
 fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: ResumptionParam) {
     let client_config = Arc::new(make_client_config(params, clientauth, resume));
     let server_config = Arc::new(make_server_config(params, clientauth, resume, None));
 
     assert!(params.ciphersuite.version() == params.version);
 
-    let rounds = apply_work_multiplier(if resume == ResumptionParam::No {
-        512
-    } else {
-        4096
-    });
+    let server_name = "localhost".try_into().unwrap();
+    let mut client = ClientConnection::new(Arc::clone(&client_config), server_name).unwrap();
+    let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
 
-    for _ in 0..rounds {
-        let server_name = "localhost".try_into().unwrap();
-        let mut client = ClientConnection::new(Arc::clone(&client_config), server_name).unwrap();
-        let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
-
-        transfer(&mut client, &mut server, None);
-        transfer(&mut server, &mut client, None);
-        transfer(&mut client, &mut server, None);
-        transfer(&mut server, &mut client, None);
-    }
+    transfer(&mut client, &mut server, None);
+    transfer(&mut server, &mut client, None);
+    transfer(&mut client, &mut server, None);
+    transfer(&mut server, &mut client, None);
 }
 
 fn do_handshake_step(client: &mut ClientConnection, server: &mut ServerConnection) -> bool {
@@ -399,26 +383,9 @@ fn bench_bulk(params: &BenchmarkParam, plaintext_size: u64, max_fragment_size: O
     let mut buf = Vec::new();
     buf.resize(plaintext_size as usize, 0u8);
 
-    let total_data = apply_work_multiplier(if plaintext_size < 8192 {
-        64 * 1024 * 1024
-    } else {
-        1024 * 1024 * 1024
-    });
-    let rounds = total_data / plaintext_size;
-
-    for _ in 0..rounds {
-        server.writer().write_all(&buf).unwrap();
-        transfer(&mut server, &mut client, Some(buf.len()));
-    }
+    server.writer().write_all(&buf).unwrap();
+    transfer(&mut server, &mut client, Some(buf.len()));
 }
-
-// fn iai_benchmark_short() -> u64 {
-//     fibonacci(black_box(10))
-// }
-//
-// fn iai_benchmark_long() -> u64 {
-//     fibonacci(black_box(30))
-// }
 
 // fn main() {
 //     for test in ALL_BENCHMARKS.iter() {
@@ -433,29 +400,27 @@ fn bench_bulk(params: &BenchmarkParam, plaintext_size: u64, max_fragment_size: O
 //     }
 // }
 
-fn bench_bulk_with_max_fragment_size() {
-    let test = BenchmarkParam::new(
+fn run_benchmark(c: &mut Criterion<Perf>) {
+    let test = &black_box(BenchmarkParam::new(
         KeyType::Rsa,
-        rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
         &rustls::version::TLS13,
-    );
+    ));
 
-    bench_bulk(&test, 1024 * 1024, Some(1000));
+    c.bench_function("handshake (no resume)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::No))));
+    c.bench_function("handshake (session id)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::SessionID))));
+    c.bench_function("handshake (ticket)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::Tickets))));
+    c.bench_function("bulk", |b| b.iter(|| bench_bulk(&test, black_box(1024 * 1024), black_box(None))));
 }
 
-fn bench_handshake_no_client_auth_no_resumption() {
-    let test = BenchmarkParam::new(
-        KeyType::Rsa,
-        rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
-        &rustls::version::TLS13,
-    );
-
-    bench_handshake(&black_box(test), black_box(ClientAuth::No), black_box(ResumptionParam::No));
-}
-
-main!(
-    bench_handshake_no_client_auth_no_resumption,
+criterion_group!(
+    name = benches;
+    config = Criterion::default().with_measurement(Perf::new(Builder::from_hardware_event(Hardware::Instructions)));
+    targets = run_benchmark
 );
+
+// criterion_group!(benches, run_benchmark);
+criterion_main!(benches);
 
 // fn main() {
 //     bench_bulk_with_max_fragment_size();
