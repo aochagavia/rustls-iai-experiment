@@ -328,15 +328,24 @@ fn make_client_config(
     cfg
 }
 
-fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: ResumptionParam) {
+fn new_connection(params: &BenchmarkParam, clientauth: ClientAuth, resume: ResumptionParam) -> (ClientConnection, ServerConnection) {
     let client_config = Arc::new(make_client_config(params, clientauth, resume));
     let server_config = Arc::new(make_server_config(params, clientauth, resume, None));
 
     assert!(params.ciphersuite.version() == params.version);
 
     let server_name = "localhost".try_into().unwrap();
-    let mut client = ClientConnection::new(Arc::clone(&client_config), server_name).unwrap();
-    let mut server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
+    let client = ClientConnection::new(Arc::clone(&client_config), server_name).unwrap();
+    let server = ServerConnection::new(Arc::clone(&server_config)).unwrap();
+    (client, server)
+}
+
+fn bench_new_connection(params: &BenchmarkParam, clientauth: ClientAuth, resume: ResumptionParam) {
+    black_box(new_connection(params, clientauth, resume));
+}
+
+fn bench_handshake(params: &BenchmarkParam, clientauth: ClientAuth, resume: ResumptionParam) {
+    let (mut client, mut server) = new_connection(params, clientauth, resume);
 
     transfer(&mut client, &mut server, None);
     transfer(&mut server, &mut client, None);
@@ -408,6 +417,16 @@ fn bench_bulk(params: &BenchmarkParam, plaintext_size: u64, max_fragment_size: O
 // // criterion_group!(benches, run_benchmark);
 // criterion_main!(benches);
 
+fn new_connection_no_resume() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
+
+    bench_new_connection(test, black_box(ClientAuth::No), black_box(ResumptionParam::No));
+}
+
 fn handshake_no_resume() {
     let test = &black_box(BenchmarkParam::new(
         KeyType::Rsa,
@@ -418,6 +437,16 @@ fn handshake_no_resume() {
     bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::No));
 }
 
+fn new_connection_session_id() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
+
+    bench_new_connection(test, black_box(ClientAuth::No), black_box(ResumptionParam::SessionID));
+}
+
 fn handshake_session_id() {
     let test = &black_box(BenchmarkParam::new(
         KeyType::Rsa,
@@ -426,6 +455,16 @@ fn handshake_session_id() {
     ));
 
     bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::SessionID));
+}
+
+fn new_connection_ticket() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
+
+    bench_new_connection(test, black_box(ClientAuth::No), black_box(ResumptionParam::Tickets));
 }
 
 fn handshake_ticket() {
@@ -448,7 +487,7 @@ fn bulk() {
     bench_bulk(&test, black_box(1024 * 1024), black_box(None));
 }
 
-iai::main!(handshake_no_resume, handshake_session_id, handshake_ticket, bulk);
+iai::main!(new_connection_no_resume, handshake_no_resume, new_connection_session_id, handshake_session_id, new_connection_ticket, handshake_ticket, bulk);
 // iai::main!(handshake_no_resume);
 
 // fn main() {
