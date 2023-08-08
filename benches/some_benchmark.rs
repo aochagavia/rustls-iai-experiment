@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::ops::Deref;
@@ -6,19 +5,19 @@ use std::ops::DerefMut;
 use std::sync::Arc;
 
 use rustls::client::Resumption;
-use rustls::server::{
-    AllowAnyAuthenticatedClient, NoClientAuth, NoServerSessionStorage, ServerSessionMemoryCache,
-};
+use rustls::server::{NoServerSessionStorage, ServerSessionMemoryCache, WebPkiClientVerifier};
 use rustls::RootCertStore;
 use rustls::Ticketer;
 use rustls::{ClientConfig, ClientConnection};
 use rustls::{ConnectionCommon, SideData};
 use rustls::{ServerConfig, ServerConnection};
 
-use criterion::{black_box, Criterion, criterion_group, criterion_main};
-use criterion_perf_events::Perf;
-use perfcnt::linux::HardwareEventType as Hardware;
-use perfcnt::linux::PerfCounterBuilderLinux as Builder;
+// use criterion::{black_box, Criterion, criterion_group, criterion_main};
+// use criterion_perf_events::Perf;
+// use perfcnt::linux::HardwareEventType as Hardware;
+// use perfcnt::linux::PerfCounterBuilderLinux as Builder;
+use iai::black_box;
+use rustls::crypto::ring::Ring;
 
 fn transfer<L, R, LS, RS>(left: &mut L, right: &mut R, expect_data: Option<usize>)
     where
@@ -259,7 +258,7 @@ fn make_server_config(
     client_auth: ClientAuth,
     resume: ResumptionParam,
     max_fragment_size: Option<usize>,
-) -> ServerConfig {
+) -> ServerConfig<Ring> {
     let client_auth = match client_auth {
         ClientAuth::Yes => {
             let roots = params.key_type.get_chain();
@@ -267,9 +266,9 @@ fn make_server_config(
             for root in roots {
                 client_auth_roots.add(&root).unwrap();
             }
-            Arc::new(AllowAnyAuthenticatedClient::new(client_auth_roots))
+            WebPkiClientVerifier::builder(Arc::new(client_auth_roots)).build().unwrap()
         }
-        ClientAuth::No => NoClientAuth::boxed(),
+        ClientAuth::No => WebPkiClientVerifier::no_client_auth(),
     };
 
     let mut cfg = ServerConfig::builder()
@@ -297,7 +296,7 @@ fn make_client_config(
     params: &BenchmarkParam,
     clientauth: ClientAuth,
     resume: ResumptionParam,
-) -> ClientConfig {
+) -> ClientConfig<Ring> {
     let mut root_store = RootCertStore::empty();
     let mut rootbuf =
         io::BufReader::new(fs::File::open(params.key_type.path_for("ca.cert")).unwrap());
@@ -400,27 +399,57 @@ fn bench_bulk(params: &BenchmarkParam, plaintext_size: u64, max_fragment_size: O
 //     }
 // }
 
-fn run_benchmark(c: &mut Criterion<Perf>) {
+// criterion_group!(
+//     name = benches;
+//     config = Criterion::default().with_measurement(Perf::new(Builder::from_hardware_event(Hardware::Instructions)));
+//     targets = run_benchmark
+// );
+//
+// // criterion_group!(benches, run_benchmark);
+// criterion_main!(benches);
+
+fn handshake_no_resume() {
     let test = &black_box(BenchmarkParam::new(
         KeyType::Rsa,
         rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
         &rustls::version::TLS13,
     ));
 
-    c.bench_function("handshake (no resume)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::No))));
-    c.bench_function("handshake (session id)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::SessionID))));
-    c.bench_function("handshake (ticket)", |b| b.iter(|| bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::Tickets))));
-    c.bench_function("bulk", |b| b.iter(|| bench_bulk(&test, black_box(1024 * 1024), black_box(None))));
+    bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::No));
 }
 
-criterion_group!(
-    name = benches;
-    config = Criterion::default().with_measurement(Perf::new(Builder::from_hardware_event(Hardware::Instructions)));
-    targets = run_benchmark
-);
+fn handshake_session_id() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
 
-// criterion_group!(benches, run_benchmark);
-criterion_main!(benches);
+    bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::SessionID));
+}
+
+fn handshake_ticket() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
+
+    bench_handshake(test, black_box(ClientAuth::No), black_box(ResumptionParam::Tickets));
+}
+
+fn bulk() {
+    let test = &black_box(BenchmarkParam::new(
+        KeyType::Rsa,
+        rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+        &rustls::version::TLS13,
+    ));
+
+    bench_bulk(&test, black_box(1024 * 1024), black_box(None));
+}
+
+iai::main!(handshake_no_resume, handshake_session_id, handshake_ticket, bulk);
+// iai::main!(handshake_no_resume);
 
 // fn main() {
 //     bench_bulk_with_max_fragment_size();

@@ -11,7 +11,7 @@ edition = "2021"
 iai = "0.1.1"
 #criterion-perf-events = "*"
 perfcnt = "*"
-rustls = "0.21.5"
+rustls = { git = "https://github.com/rustls/rustls.git", rev = "ae1d72f229555cbe87f7abe9784edc918750fb93", features = ["webpki"]  }
 rustls-pemfile = "*"
 
 
