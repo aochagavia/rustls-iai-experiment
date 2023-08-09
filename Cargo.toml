@@ -6,16 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-
-[dev-dependencies]
-iai = "0.1.1"
-#criterion-perf-events = "*"
-perfcnt = "*"
-#rustls = { git = "https://github.com/rustls/rustls.git", rev = "ae1d72f229555cbe87f7abe9784edc918750fb93", features = ["webpki"]  }
-rustls = { git = "https://github.com/rustls/rustls.git", rev = "22e6a87f6d5c44212f2969d1fb31ed889499b63a" }
+itertools = "0.11.0"
+rayon = "1.7.0"
+rustls = { git = "https://github.com/rustls/rustls.git", rev = "22e6a87f6d5c44212f2969d1fb31ed889499b63a"  }
+#rustls = { git = "https://github.com/rustls/rustls.git", rev = "ae1d72f229555cbe87f7abe9784edc918750fb93", features = ["webkpi"] }
 rustls-pemfile = "*"
 
-
-[[bench]]
-name = "some_benchmark"
-harness = false
